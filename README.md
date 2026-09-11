@@ -20,6 +20,18 @@ npm run dev
 
 Web App 的活動名稱和開放時段目前定義於 `app/api/checkin/route.ts`。
 
+## 純 HTML／GitHub Pages 版本
+
+根目錄的 `index.html` 不需要 Node.js，可直接由 GitHub Pages 顯示。它使用 Google Apps Script 寫入試算表：
+
+1. 將 `google-apps-script/Code.gs` 貼入試算表的 Apps Script。
+2. 執行「初始化工作表」。
+3. 將 Apps Script 部署成網頁應用程式，執行身分選擇自己，存取權選擇所有人。
+4. 把部署網址貼到 `index.html` 的 `GAS_URL`。
+5. 在 GitHub repository 的 Settings → Pages，選擇 `main` 分支與根目錄。
+
+活動時間直接在 Google 試算表的黃色欄位修改；HTML 會從 GAS 讀取最新設定。
+
 ## Google 表單／試算表版本
 
 `google-apps-script/Code.gs` 可貼入 Google 試算表的「擴充功能 → Apps Script」。完整步驟請參考 `google-apps-script/使用說明.md`。

@@ -15,6 +15,7 @@ function onOpen() {
 
 function initializeCheckinSystem() {
   const ss = SpreadsheetApp.getActive();
+  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', ss.getId());
   let cfg = ss.getSheetByName(CFG_SHEET) || ss.insertSheet(CFG_SHEET, 0);
   let data = ss.getSheetByName(DATA_SHEET) || ss.insertSheet(DATA_SHEET);
 
@@ -46,8 +47,13 @@ function initializeCheckinSystem() {
   SpreadsheetApp.getUi().alert('初始化完成。請填入表單 ID 與網址，再執行「套用時間並建立觸發器」。');
 }
 
+function getSpreadsheet_() {
+  const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+  return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActive();
+}
+
 function getConfig_() {
-  const sheet = SpreadsheetApp.getActive().getSheetByName(CFG_SHEET);
+  const sheet = getSpreadsheet_().getSheetByName(CFG_SHEET);
   if (!sheet) throw new Error('請先執行「初始化工作表」。');
   const v = sheet.getRange('B4:B9').getValues().flat();
   const [eventName, eventDate, startTime, endTime, formId, formUrl] = v;
@@ -85,7 +91,7 @@ function setFormState_(accepting, label) {
 }
 
 function refreshQRCode() {
-  const sheet = SpreadsheetApp.getActive().getSheetByName(CFG_SHEET);
+  const sheet = getSpreadsheet_().getSheetByName(CFG_SHEET);
   if (!sheet) return;
   const url = String(sheet.getRange('B9').getValue()).trim();
   sheet.getRange('D4').clearContent();
@@ -94,7 +100,7 @@ function refreshQRCode() {
 }
 
 function onFormSubmit(e) {
-  const ss = SpreadsheetApp.getActive();
+  const ss = getSpreadsheet_();
   const data = ss.getSheetByName(DATA_SHEET);
   const cfg = ss.getSheetByName(CFG_SHEET);
   const values = e && e.namedValues ? e.namedValues : {};
@@ -113,6 +119,73 @@ function onFormSubmit(e) {
 
 function installFormSubmitTrigger() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'onFormSubmit').forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger('onFormSubmit').forSpreadsheet(SpreadsheetApp.getActive()).onFormSubmit().create();
+  ScriptApp.newTrigger('onFormSubmit').forSpreadsheet(getSpreadsheet_()).onFormSubmit().create();
   SpreadsheetApp.getUi().alert('報到紀錄觸發器已安裝。');
+}
+
+function getPublicConfig_() {
+  const sheet = getSpreadsheet_().getSheetByName(CFG_SHEET);
+  if (!sheet) throw new Error('找不到活動設定工作表。');
+  const v = sheet.getRange('B4:B7').getValues().flat();
+  const eventDate = v[1], startTime = v[2], endTime = v[3];
+  return {
+    eventName: String(v[0] || '現場報到'),
+    startAt: combineDateTime_(eventDate, startTime),
+    endAt: combineDateTime_(eventDate, endTime)
+  };
+}
+
+function doGet(e) {
+  const callback = String((e && e.parameter && e.parameter.callback) || 'receiveCheckinConfig');
+  if (!/^[A-Za-z_$][0-9A-Za-z_$\.]*$/.test(callback)) return ContentService.createTextOutput('Invalid callback');
+  try {
+    const c = getPublicConfig_();
+    const payload = { ok: true, eventName: c.eventName, startAt: c.startAt.toISOString(), endAt: c.endAt.toISOString(), serverTime: new Date().toISOString() };
+    return ContentService.createTextOutput(callback + '(' + JSON.stringify(payload) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  } catch (err) {
+    return ContentService.createTextOutput(callback + '(' + JSON.stringify({ ok: false, error: String(err.message || err) }) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+}
+
+function doPost(e) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const p = (e && e.parameter) || {};
+    const name = String(p.name || '').trim().replace(/\s+/g, ' ');
+    const role = String(p.role || '');
+    const email = String(p.email || '').trim().toLowerCase();
+    const c = getPublicConfig_();
+    const now = new Date();
+    if (now < c.startAt) return resultPage_(false, '報到尚未開始', '開放時間：' + formatTime_(c.startAt));
+    if (now > c.endAt) return resultPage_(false, '報到已截止', '截止時間：' + formatTime_(c.endAt));
+    if (name.length < 2 || name.length > 40) return resultPage_(false, '姓名格式不正確', '請返回後重新輸入。');
+    if (role !== '教師' && role !== '職員') return resultPage_(false, '請選擇身分', '身分必須是教師或職員。');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return resultPage_(false, 'Email 格式不正確', '請返回後重新輸入。');
+
+    const ss = getSpreadsheet_();
+    const data = ss.getSheetByName(DATA_SHEET) || ss.insertSheet(DATA_SHEET);
+    const emails = data.getLastRow() > 1 ? data.getRange(2, 4, data.getLastRow() - 1, 1).getDisplayValues().flat().map(x => x.toLowerCase()) : [];
+    const duplicate = emails.includes(email);
+    if (!duplicate) {
+      data.appendRow([now, name, role, email, '報到成功', c.eventName]);
+      const row = data.getLastRow();
+      data.getRange(row, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss');
+      data.getRange(row, 5).setBackground('#D9FAEC').setFontColor('#0A7B59').setFontWeight('bold');
+    }
+    return resultPage_(true, duplicate ? '已經報到過囉！' : '報到完成！', duplicate ? '這個 Email 已有報到紀錄。' : '報到時間：' + formatTime_(now));
+  } catch (err) {
+    return resultPage_(false, '目前無法完成報到', String(err.message || err));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function formatTime_(date) { return Utilities.formatDate(date, 'Asia/Taipei', 'yyyy/MM/dd HH:mm:ss'); }
+
+function resultPage_(success, title, detail) {
+  const color = success ? '#20C997' : '#FF6B8A';
+  const icon = success ? '✓' : '!';
+  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#fff5a8,#ffd4e9 50%,#bef6ff);font-family:Arial,'Microsoft JhengHei',sans-serif;color:#40345c}.card{width:min(86vw,390px);padding:42px 28px;text-align:center;background:#fff;border:4px solid #fff;border-radius:32px;box-shadow:0 22px 0 #6a57b026,0 32px 70px #59479533}.icon{width:76px;height:76px;margin:auto;display:grid;place-items:center;border-radius:50%;background:${color};color:#fff;font-size:46px;font-weight:900}h1{font-size:30px;margin:22px 0 10px}p{font-size:17px;line-height:1.7;color:#716482}.back{display:inline-block;margin-top:22px;padding:14px 28px;border-radius:16px;background:linear-gradient(90deg,#ff5fa5,#8b7cff,#27cadb);color:#fff;text-decoration:none;font-weight:800}</style></head><body><main class="card"><div class="icon">${icon}</div><h1>${title}</h1><p>${detail}</p><a class="back" href="javascript:history.back()">返回報到頁</a></main></body></html>`;
+  return HtmlService.createHtmlOutput(html).setTitle(title).addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
