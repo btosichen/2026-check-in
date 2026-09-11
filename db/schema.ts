@@ -1,0 +1,2 @@
+import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+export const checkins = sqliteTable("checkins", { id: integer("id").primaryKey({ autoIncrement: true }), eventId: text("event_id").notNull(), name: text("name").notNull(), role: text("role", { enum: ["教師", "職員"] }).notNull(), email: text("email").notNull(), checkedInAt: text("checked_in_at").notNull() }, (table) => [uniqueIndex("idx_checkins_event_email").on(table.eventId, table.email)]);
