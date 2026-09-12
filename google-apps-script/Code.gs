@@ -39,10 +39,10 @@ function initializeCheckinSystem() {
   cfg.setFrozenRows(3); cfg.setHiddenGridlines(true);
   cfg.getRange('D3').setValue('QR Code').setFontWeight('bold').setFontColor('#5B3FA6');
 
-  if (data.getLastRow() === 0) data.getRange('A1:F1').setValues([['時間戳記', '姓名', '身分', 'Email', '報到結果', '活動名稱']]);
-  data.getRange('A1:F1').setBackground('#FF69A8').setFontColor('#FFFFFF').setFontWeight('bold');
+  data = ensureDataSheet_(ss);
+  data.getRange('A1:G1').setBackground('#FF69A8').setFontColor('#FFFFFF').setFontWeight('bold');
   data.setFrozenRows(1); data.setHiddenGridlines(true);
-  data.setColumnWidths(1, 1, 160); data.setColumnWidths(2, 2, 120); data.setColumnWidth(4, 220); data.setColumnWidth(5, 120); data.setColumnWidth(6, 180);
+  data.setColumnWidths(1, 1, 160); data.setColumnWidths(2, 3, 120); data.setColumnWidth(5, 220); data.setColumnWidth(6, 120); data.setColumnWidth(7, 180);
   refreshQRCode();
   SpreadsheetApp.getUi().alert('初始化完成。請填入表單 ID 與網址，再執行「套用時間並建立觸發器」。');
 }
@@ -50,6 +50,18 @@ function initializeCheckinSystem() {
 function getSpreadsheet_() {
   const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActive();
+}
+
+function ensureDataSheet_(ss) {
+  const data = ss.getSheetByName(DATA_SHEET) || ss.insertSheet(DATA_SHEET);
+  if (data.getLastRow() === 0) {
+    data.getRange('A1:G1').setValues([['時間戳記', '姓名', '身分', '編組', 'Email', '報到結果', '活動名稱']]);
+  } else {
+    const headers = data.getRange(1, 1, 1, Math.max(data.getLastColumn(), 6)).getDisplayValues()[0];
+    if (!headers.includes('編組')) data.insertColumnAfter(3);
+    data.getRange('A1:G1').setValues([['時間戳記', '姓名', '身分', '編組', 'Email', '報到結果', '活動名稱']]);
+  }
+  return data;
 }
 
 function getConfig_() {
@@ -101,20 +113,21 @@ function refreshQRCode() {
 
 function onFormSubmit(e) {
   const ss = getSpreadsheet_();
-  const data = ss.getSheetByName(DATA_SHEET);
   const cfg = ss.getSheetByName(CFG_SHEET);
   const values = e && e.namedValues ? e.namedValues : {};
   const pick = names => { for (const n of names) if (values[n] && values[n][0]) return String(values[n][0]).trim(); return ''; };
   const name = pick(['姓名']);
   const role = pick(['身分']);
+  const team = pick(['編組']);
   const email = pick(['Email', '電子郵件地址', '電子郵件']).toLowerCase();
   if (!email) return;
-  const emails = data.getLastRow() > 1 ? data.getRange(2, 4, data.getLastRow() - 1, 1).getDisplayValues().flat().map(x => x.toLowerCase()) : [];
+  const normalizedData = ensureDataSheet_(ss);
+  const emails = normalizedData.getLastRow() > 1 ? normalizedData.getRange(2, 5, normalizedData.getLastRow() - 1, 1).getDisplayValues().flat().map(x => x.toLowerCase()) : [];
   const duplicate = emails.includes(email);
-  data.appendRow([new Date(), name, role, email, duplicate ? '重複報到' : '報到成功', cfg ? cfg.getRange('B4').getDisplayValue() : '']);
-  const row = data.getLastRow();
-  data.getRange(row, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss');
-  data.getRange(row, 5).setBackground(duplicate ? '#FFD9E7' : '#D9FAEC').setFontColor(duplicate ? '#C43168' : '#0A7B59').setFontWeight('bold');
+  normalizedData.appendRow([new Date(), name, role, team, email, duplicate ? '重複報到' : '報到成功', cfg ? cfg.getRange('B4').getDisplayValue() : '']);
+  const row = normalizedData.getLastRow();
+  normalizedData.getRange(row, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss');
+  normalizedData.getRange(row, 6).setBackground(duplicate ? '#FFD9E7' : '#D9FAEC').setFontColor(duplicate ? '#C43168' : '#0A7B59').setFontWeight('bold');
 }
 
 function installFormSubmitTrigger() {
@@ -154,6 +167,7 @@ function doPost(e) {
     const p = (e && e.parameter) || {};
     const name = String(p.name || '').trim().replace(/\s+/g, ' ');
     const role = String(p.role || '');
+    const team = String(p.team || '');
     const email = String(p.email || '').trim().toLowerCase();
     const c = getPublicConfig_();
     const now = new Date();
@@ -161,17 +175,19 @@ function doPost(e) {
     if (now > c.endAt) return resultPage_(false, '報到已截止', '截止時間：' + formatTime_(c.endAt));
     if (name.length < 2 || name.length > 40) return resultPage_(false, '姓名格式不正確', '請返回後重新輸入。');
     if (role !== '教師' && role !== '職員') return resultPage_(false, '請選擇身分', '身分必須是教師或職員。');
+    const allowedTeams = ['緊急救護組', '安全防護組', '避難引導組', '通報組', '搶救組'];
+    if (!allowedTeams.includes(team)) return resultPage_(false, '請選擇編組', '請返回後選擇所屬編組。');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return resultPage_(false, 'Email 格式不正確', '請返回後重新輸入。');
 
     const ss = getSpreadsheet_();
-    const data = ss.getSheetByName(DATA_SHEET) || ss.insertSheet(DATA_SHEET);
-    const emails = data.getLastRow() > 1 ? data.getRange(2, 4, data.getLastRow() - 1, 1).getDisplayValues().flat().map(x => x.toLowerCase()) : [];
+    const data = ensureDataSheet_(ss);
+    const emails = data.getLastRow() > 1 ? data.getRange(2, 5, data.getLastRow() - 1, 1).getDisplayValues().flat().map(x => x.toLowerCase()) : [];
     const duplicate = emails.includes(email);
     if (!duplicate) {
-      data.appendRow([now, name, role, email, '報到成功', c.eventName]);
+      data.appendRow([now, name, role, team, email, '報到成功', c.eventName]);
       const row = data.getLastRow();
       data.getRange(row, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss');
-      data.getRange(row, 5).setBackground('#D9FAEC').setFontColor('#0A7B59').setFontWeight('bold');
+      data.getRange(row, 6).setBackground('#D9FAEC').setFontColor('#0A7B59').setFontWeight('bold');
     }
     return resultPage_(true, duplicate ? '已經報到過囉！' : '報到完成！', duplicate ? '這個 Email 已有報到紀錄。' : '報到時間：' + formatTime_(now));
   } catch (err) {
