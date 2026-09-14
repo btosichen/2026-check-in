@@ -148,15 +148,51 @@ function getPublicConfig_() {
   };
 }
 
+function getAttendanceCounts_() {
+  const teams = ['緊急救護組', '安全防護組', '避難引導組', '通報組', '搶救組'];
+  const counts = teams.reduce((result, team) => {
+    result[team] = 0;
+    return result;
+  }, {});
+  const eventName = getPublicConfig_().eventName;
+  const data = ensureDataSheet_(getSpreadsheet_());
+  const lastRow = data.getLastRow();
+  if (lastRow > 1) {
+    data.getRange(2, 1, lastRow - 1, 7).getDisplayValues().forEach(row => {
+      const team = String(row[3] || '').trim();
+      const result = String(row[5] || '').trim();
+      const rowEventName = String(row[6] || '').trim();
+      if (result === '報到成功' && rowEventName === eventName && Object.prototype.hasOwnProperty.call(counts, team)) {
+        counts[team] += 1;
+      }
+    });
+  }
+  return {
+    ok: true,
+    eventName,
+    counts,
+    total: teams.reduce((sum, team) => sum + counts[team], 0),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function jsonpOutput_(callback, payload) {
+  return ContentService.createTextOutput(callback + '(' + JSON.stringify(payload) + ');')
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
 function doGet(e) {
   const callback = String((e && e.parameter && e.parameter.callback) || 'receiveCheckinConfig');
   if (!/^[A-Za-z_$][0-9A-Za-z_$\.]*$/.test(callback)) return ContentService.createTextOutput('Invalid callback');
   try {
+    if (e && e.parameter && e.parameter.action === 'counts') {
+      return jsonpOutput_(callback, getAttendanceCounts_());
+    }
     const c = getPublicConfig_();
     const payload = { ok: true, eventName: c.eventName, startAt: c.startAt.toISOString(), endAt: c.endAt.toISOString(), serverTime: new Date().toISOString() };
-    return ContentService.createTextOutput(callback + '(' + JSON.stringify(payload) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+    return jsonpOutput_(callback, payload);
   } catch (err) {
-    return ContentService.createTextOutput(callback + '(' + JSON.stringify({ ok: false, error: String(err.message || err) }) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+    return jsonpOutput_(callback, { ok: false, error: String(err.message || err) });
   }
 }
 
