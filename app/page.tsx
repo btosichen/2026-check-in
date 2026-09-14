@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Clock3, LockKeyhole, Mail, Settings, UserRound } from "lucide-react";
 import Image from "next/image";
 
@@ -17,6 +17,7 @@ const EXPECTED_COUNTS: Record<string, number> = { "緊急救護組": 16, "安全
 
 type Status = { state: "before" | "open" | "closed"; message: string; window: string; eventName: string };
 type CountPayload = { ok: boolean; counts?: Record<string, number>; expected?: Record<string, number>; total?: number; totalExpected?: number; updatedAt?: string };
+type ProtectedAction = "resetCounts" | "openSpreadsheet";
 
 function loadJsonp<T>(params: Record<string, string>, prefix: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -63,6 +64,8 @@ export default function Home() {
   const [totalExpected, setTotalExpected] = useState<number | null>(197);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [protectedAction, setProtectedAction] = useState<ProtectedAction | null>(null);
+  const [password, setPassword] = useState("");
 
   const refreshCounts = useCallback(() => {
     return loadJsonp<CountPayload>({ action: "counts" }, "receiveCheckinCounts")
@@ -88,58 +91,45 @@ export default function Home() {
   }, [refreshCounts]);
 
   const resetAttendance = () => {
-    const password = window.prompt("請輸入指揮官密碼");
-    if (password === null) return;
-    if (!password) {
-      window.alert("尚未輸入密碼。");
-      return;
-    }
-    if (!window.confirm("確定要將各組實到人數歸零嗎？原始報到紀錄仍會保留。")) return;
-    const resetForm = document.createElement("form");
-    resetForm.method = "post";
-    resetForm.action = GAS_URL;
-    resetForm.target = "_blank";
-    resetForm.style.display = "none";
-    for (const [name, value] of [["action", "resetCounts"], ["password", password]]) {
-      const input = document.createElement("input");
-      input.type = "hidden";
-      input.name = name;
-      input.value = value;
-      resetForm.appendChild(input);
-    }
-    document.body.appendChild(resetForm);
-    resetForm.submit();
-    resetForm.remove();
-    setResetMessage("清除請求已送出，完成後將自動更新…");
-    window.setTimeout(() => void refreshCounts(), 2500);
-    window.setTimeout(() => {
-      void refreshCounts();
-      setResetMessage(null);
-    }, 5000);
+    setPassword("");
+    setProtectedAction("resetCounts");
   };
 
   const openSpreadsheet = () => {
-    const password = window.prompt("請輸入管理密碼");
-    if (password === null) return;
-    if (!password) {
-      window.alert("尚未輸入密碼。");
-      return;
-    }
-    const accessForm = document.createElement("form");
-    accessForm.method = "post";
-    accessForm.action = GAS_URL;
-    accessForm.target = "_blank";
-    accessForm.style.display = "none";
-    for (const [name, value] of [["action", "openSpreadsheet"], ["password", password]]) {
+    setPassword("");
+    setProtectedAction("openSpreadsheet");
+  };
+
+  const submitProtectedAction = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!protectedAction || !password) return;
+    if (protectedAction === "resetCounts" && !window.confirm("確定要將各組實到人數歸零嗎？原始報到紀錄仍會保留。")) return;
+    const action = protectedAction;
+    const protectedForm = document.createElement("form");
+    protectedForm.method = "post";
+    protectedForm.action = GAS_URL;
+    protectedForm.target = "_blank";
+    protectedForm.style.display = "none";
+    for (const [name, value] of [["action", action], ["password", password]]) {
       const input = document.createElement("input");
       input.type = "hidden";
       input.name = name;
       input.value = value;
-      accessForm.appendChild(input);
+      protectedForm.appendChild(input);
     }
-    document.body.appendChild(accessForm);
-    accessForm.submit();
-    accessForm.remove();
+    document.body.appendChild(protectedForm);
+    protectedForm.submit();
+    protectedForm.remove();
+    setProtectedAction(null);
+    setPassword("");
+    if (action === "resetCounts") {
+      setResetMessage("清除請求已送出，完成後將自動更新…");
+      window.setTimeout(() => void refreshCounts(), 2500);
+      window.setTimeout(() => {
+        void refreshCounts();
+        setResetMessage(null);
+      }, 5000);
+    }
   };
 
   const open = status.state === "open";
@@ -169,5 +159,15 @@ export default function Home() {
     </section>
     <footer className="relative mx-auto mt-5 max-w-md text-center text-xs font-bold leading-5 text-[#685a7a]"><p>個人資料僅供本次活動出席紀錄使用</p><p className="mt-1 font-black text-[#153957]">臺北市立陽明高中總務處製作</p></footer>
     <button type="button" onClick={openSpreadsheet} title="管理試算表" aria-label="開啟管理試算表" className="fixed bottom-4 right-4 z-20 grid h-14 w-14 place-items-center rounded-full border-[3px] border-white bg-[linear-gradient(135deg,#153957,#146b8c)] text-white shadow-[0_7px_0_#071e32,0_13px_28px_rgba(7,30,50,.4)] transition hover:-translate-y-0.5 hover:rotate-12 hover:brightness-110 focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-[#ffb703]/70 max-[400px]:bottom-3 max-[400px]:right-3 max-[400px]:h-13 max-[400px]:w-13"><Settings size={27} strokeWidth={2.5}/></button>
+    {protectedAction && <div className="fixed inset-0 z-50 grid place-items-center bg-[#071e32]/65 px-4 backdrop-blur-sm" onMouseDown={() => { setProtectedAction(null); setPassword(""); }}>
+      <form role="dialog" aria-modal="true" aria-labelledby="passwordDialogTitle" onSubmit={submitProtectedAction} onMouseDown={event => event.stopPropagation()} className="w-full max-w-sm rounded-[28px] border-4 border-white bg-white p-6 text-center shadow-[0_22px_0_rgba(7,30,50,.22),0_34px_70px_rgba(7,30,50,.38)]">
+        <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[#153957] text-white shadow-[0_6px_0_#071e32]"><LockKeyhole size={30}/></div>
+        <h2 id="passwordDialogTitle" className="mt-5 text-2xl font-black text-[#153957]">{protectedAction === "resetCounts" ? "清除實到人數" : "開啟管理試算表"}</h2>
+        <label htmlFor="protectedPassword" className="mt-5 block text-left text-sm font-black text-[#5a4b79]">請輸入管理密碼</label>
+        <input id="protectedPassword" type="password" autoComplete="current-password" autoFocus required value={password} onChange={event => setPassword(event.target.value)} className="mt-2 min-h-14 w-full rounded-2xl border-2 border-[#d9d0ff] bg-[#fcfbff] px-4 text-lg tracking-[.18em] outline-none focus:border-[#8b7cff] focus:ring-4 focus:ring-[#8b7cff]/15"/>
+        <p className="mt-2 text-left text-xs font-bold text-[#817495]">密碼會以圓點遮蔽，不會顯示在畫面上。</p>
+        <div className="mt-6 grid grid-cols-2 gap-3"><button type="button" onClick={() => { setProtectedAction(null); setPassword(""); }} className="min-h-12 rounded-2xl border-2 border-[#d7e4ea] bg-white font-black text-[#5a6570]">取消</button><button type="submit" className="min-h-12 rounded-2xl bg-[linear-gradient(90deg,#e64532,#c63042,#146b8c)] font-black text-white shadow-[0_5px_0_#153957]">確認</button></div>
+      </form>
+    </div>}
   </main>;
 }
