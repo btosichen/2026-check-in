@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Clock3, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { Clock3, LockKeyhole, Mail, Settings, UserRound } from "lucide-react";
 import Image from "next/image";
 
 const GAS_URL = "https://script.google.com/macros/s/AKfycbxF-eM8zsoHOawK9ASXhtYgF_QJOKzrWfmpmKfGcF_C2uBzXMIg4tmqgR6f8ieyj0bL-g/exec";
@@ -111,6 +111,30 @@ export default function Home() {
     }, 5000);
   };
 
+  const openSpreadsheet = () => {
+    const password = window.prompt("請輸入管理密碼");
+    if (password === null) return;
+    if (!password) {
+      window.alert("尚未輸入密碼。");
+      return;
+    }
+    const accessForm = document.createElement("form");
+    accessForm.method = "post";
+    accessForm.action = GAS_URL;
+    accessForm.target = "_blank";
+    accessForm.style.display = "none";
+    for (const [name, value] of [["action", "openSpreadsheet"], ["password", password]]) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      accessForm.appendChild(input);
+    }
+    document.body.appendChild(accessForm);
+    accessForm.submit();
+    accessForm.remove();
+  };
+
   const open = status.state === "open";
   return <main className="relative min-h-screen overflow-hidden bg-[linear-gradient(135deg,#fff6a8,#ffd5ea_50%,#bff7ff)] px-4 py-6 text-[#40345c] sm:py-10">
     <div aria-hidden className="absolute -left-16 top-16 h-44 w-44 rounded-full bg-[#ff7043]/35 blur-2xl"/>
@@ -136,6 +160,7 @@ export default function Home() {
       <p className="mt-3 text-center text-xs font-bold text-[#6d7580]">{resetMessage || (updatedAt ? `每 15 秒自動更新｜${new Intl.DateTimeFormat("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(updatedAt))} 更新` : "正在讀取現場統計…")}</p>
       <button type="button" onClick={resetAttendance} className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border-2 border-[#c63042] bg-white text-sm font-black text-[#a92235] transition hover:bg-[#fff0f2] focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-[#c63042]/20"><LockKeyhole size={18}/>清除實到人數</button>
     </section>
-    <p className="relative mx-auto mt-5 max-w-md text-center text-xs font-bold leading-5 text-[#685a7a]">個人資料僅供本次活動出席紀錄使用</p>
+    <footer className="relative mx-auto mt-5 max-w-md text-center text-xs font-bold leading-5 text-[#685a7a]"><p>個人資料僅供本次活動出席紀錄使用</p><p className="mt-1 font-black text-[#153957]">臺北市立陽明高中總務處製作</p></footer>
+    <button type="button" onClick={openSpreadsheet} title="管理試算表" aria-label="開啟管理試算表" className="fixed bottom-4 right-4 z-20 grid h-14 w-14 place-items-center rounded-full border-[3px] border-white bg-[linear-gradient(135deg,#153957,#146b8c)] text-white shadow-[0_7px_0_#071e32,0_13px_28px_rgba(7,30,50,.4)] transition hover:-translate-y-0.5 hover:rotate-12 hover:brightness-110 focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-[#ffb703]/70 max-[400px]:bottom-3 max-[400px]:right-3 max-[400px]:h-13 max-[400px]:w-13"><Settings size={27} strokeWidth={2.5}/></button>
   </main>;
 }

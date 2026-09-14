@@ -2,6 +2,7 @@ const CFG_SHEET = '活動設定';
 const DATA_SHEET = '報到紀錄';
 const ATTENDANCE_RESET_AT_PROPERTY = 'ATTENDANCE_RESET_AT';
 const RESET_PASSWORD_SHA256 = '5723959ba4cced33029abb64cb213b70404d63b2f9e741be83d0be5385cb1c2c';
+const SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/13dEOcuuzqlo4MJYC_kJ6xn6q2PZrPC1iD3bSRJwZleM/edit?usp=sharing';
 const EXPECTED_COUNTS = Object.freeze({
   '緊急救護組': 16,
   '安全防護組': 27,
@@ -249,6 +250,10 @@ function doPost(e) {
   lock.waitLock(10000);
   try {
     const p = (e && e.parameter) || {};
+    if (p.action === 'openSpreadsheet') {
+      if (!passwordMatches_(p.password)) return resultPage_(false, '密碼錯誤', '無法開啟管理試算表，請關閉此頁後重新操作。');
+      return spreadsheetAccessPage_();
+    }
     if (p.action === 'resetCounts') {
       if (!passwordMatches_(p.password)) return resultPage_(false, '密碼錯誤', '實到人數未清除，請關閉此頁後重新操作。');
       const now = new Date();
@@ -288,6 +293,11 @@ function doPost(e) {
 }
 
 function formatTime_(date) { return Utilities.formatDate(date, 'Asia/Taipei', 'yyyy/MM/dd HH:mm:ss'); }
+
+function spreadsheetAccessPage_() {
+  const html = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>管理試算表</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#fff5a8,#ffd4e9 50%,#bef6ff);font-family:Arial,'Microsoft JhengHei',sans-serif;color:#40345c}.card{width:min(86vw,390px);padding:42px 28px;text-align:center;background:#fff;border:4px solid #fff;border-radius:32px;box-shadow:0 22px 0 #6a57b026,0 32px 70px #59479533}.icon{width:76px;height:76px;margin:auto;display:grid;place-items:center;border-radius:50%;background:#153957;color:#fff;font-size:40px;box-shadow:0 7px 0 #071e32}h1{font-size:30px;margin:22px 0 10px}p{font-size:17px;line-height:1.7;color:#716482}.open{display:inline-block;margin-top:22px;padding:14px 28px;border-radius:16px;background:linear-gradient(90deg,#e64532,#c63042,#146b8c);color:#fff;text-decoration:none;font-weight:800;box-shadow:0 6px 0 #153957}</style></head><body><main class="card"><div class="icon">⚙</div><h1>驗證成功</h1><p>請按下方按鈕開啟管理試算表。</p><a class="open" href="${SPREADSHEET_URL}" target="_blank" rel="noopener noreferrer">開啟 Google 試算表</a></main></body></html>`;
+  return HtmlService.createHtmlOutput(html).setTitle('管理試算表').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
 
 function resultPage_(success, title, detail) {
   const color = success ? '#20C997' : '#FF6B8A';
