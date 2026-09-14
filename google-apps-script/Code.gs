@@ -79,12 +79,50 @@ function getConfig_() {
   if (!sheet) throw new Error('請先執行「初始化工作表」。');
   const v = sheet.getRange('B4:B9').getValues().flat();
   const [eventName, eventDate, startTime, endTime, formId, formUrl] = v;
-  if (!(eventDate instanceof Date) || !(startTime instanceof Date) || !(endTime instanceof Date)) throw new Error('日期或時間格式不正確。');
   if (!formId) throw new Error('請填入 Google 表單 ID。');
-  return { sheet, eventName, formDate: eventDate, startAt: combineDateTime_(eventDate, startTime), endAt: combineDateTime_(eventDate, endTime), formId: String(formId).trim(), formUrl: String(formUrl).trim() };
+  return { sheet, eventName, formDate: parseDateValue_(eventDate), startAt: combineDateTime_(eventDate, startTime, '開始時間'), endAt: combineDateTime_(eventDate, endTime, '截止時間'), formId: String(formId).trim(), formUrl: String(formUrl).trim() };
 }
 
-function combineDateTime_(date, time) { return new Date(date.getFullYear(), date.getMonth(), date.getDate(), time.getHours(), time.getMinutes(), 0); }
+function parseDateValue_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) return value;
+  const match = String(value || '').trim().match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
+  if (!match) throw new Error('報到日期格式不正確，請使用「2026/09/14」格式。');
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (date.getFullYear() !== Number(match[1]) || date.getMonth() !== Number(match[2]) - 1 || date.getDate() !== Number(match[3])) {
+    throw new Error('報到日期不存在，請重新輸入。');
+  }
+  return date;
+}
+
+function parseTimeValue_(value, label) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return { hours: value.getHours(), minutes: value.getMinutes(), seconds: value.getSeconds() };
+  }
+  if (typeof value === 'number' && isFinite(value)) {
+    const fraction = ((value % 1) + 1) % 1;
+    const totalSeconds = Math.round(fraction * 86400) % 86400;
+    return { hours: Math.floor(totalSeconds / 3600), minutes: Math.floor((totalSeconds % 3600) / 60), seconds: totalSeconds % 60 };
+  }
+  let text = String(value || '').trim().replace(/：/g, ':');
+  const isPm = /下午|PM/i.test(text);
+  const isAm = /上午|AM/i.test(text);
+  text = text.replace(/上午|下午|AM|PM/gi, '').trim();
+  const match = text.match(/^(\d{1,2}):([0-5]?\d)(?::([0-5]?\d))?$/);
+  if (!match) throw new Error(label + '格式不正確，請輸入「13:10」或「下午 1:10」。');
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3] || 0);
+  if (isPm && hours < 12) hours += 12;
+  if (isAm && hours === 12) hours = 0;
+  if (hours < 0 || hours > 23) throw new Error(label + '的小時必須介於 0 到 23。');
+  return { hours, minutes, seconds };
+}
+
+function combineDateTime_(dateValue, timeValue, label) {
+  const date = parseDateValue_(dateValue);
+  const time = parseTimeValue_(timeValue, label || '時間');
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), time.hours, time.minutes, time.seconds);
+}
 
 function setupScheduleTriggers() {
   const c = getConfig_();
@@ -154,8 +192,8 @@ function getPublicConfig_() {
   const eventDate = v[1], startTime = v[2], endTime = v[3];
   return {
     eventName: String(v[0] || '現場報到'),
-    startAt: combineDateTime_(eventDate, startTime),
-    endAt: combineDateTime_(eventDate, endTime)
+    startAt: combineDateTime_(eventDate, startTime, '開始時間'),
+    endAt: combineDateTime_(eventDate, endTime, '截止時間')
   };
 }
 
