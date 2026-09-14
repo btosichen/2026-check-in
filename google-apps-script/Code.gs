@@ -1,5 +1,14 @@
 const CFG_SHEET = '活動設定';
 const DATA_SHEET = '報到紀錄';
+const ATTENDANCE_RESET_AT_PROPERTY = 'ATTENDANCE_RESET_AT';
+const RESET_PASSWORD_SHA256 = '5723959ba4cced33029abb64cb213b70404d63b2f9e741be83d0be5385cb1c2c';
+const EXPECTED_COUNTS = Object.freeze({
+  '緊急救護組': 16,
+  '安全防護組': 27,
+  '避難引導組': 71,
+  '通報組': 15,
+  '搶救組': 68
+});
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('報到系統')
@@ -122,9 +131,10 @@ function onFormSubmit(e) {
   const email = pick(['Email', '電子郵件地址', '電子郵件']).toLowerCase();
   if (!email) return;
   const normalizedData = ensureDataSheet_(ss);
-  const emails = normalizedData.getLastRow() > 1 ? normalizedData.getRange(2, 5, normalizedData.getLastRow() - 1, 1).getDisplayValues().flat().map(x => x.toLowerCase()) : [];
+  const eventName = cfg ? cfg.getRange('B4').getDisplayValue() : '';
+  const emails = getActiveSuccessfulEmails_(normalizedData, eventName);
   const duplicate = emails.includes(email);
-  normalizedData.appendRow([new Date(), name, role, team, email, duplicate ? '重複報到' : '報到成功', cfg ? cfg.getRange('B4').getDisplayValue() : '']);
+  normalizedData.appendRow([new Date(), name, role, team, email, duplicate ? '重複報到' : '報到成功', eventName]);
   const row = normalizedData.getLastRow();
   normalizedData.getRange(row, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss');
   normalizedData.getRange(row, 6).setBackground(duplicate ? '#FFD9E7' : '#D9FAEC').setFontColor(duplicate ? '#C43168' : '#0A7B59').setFontWeight('bold');
@@ -149,7 +159,7 @@ function getPublicConfig_() {
 }
 
 function getAttendanceCounts_() {
-  const teams = ['緊急救護組', '安全防護組', '避難引導組', '通報組', '搶救組'];
+  const teams = Object.keys(EXPECTED_COUNTS);
   const counts = teams.reduce((result, team) => {
     result[team] = 0;
     return result;
@@ -157,12 +167,14 @@ function getAttendanceCounts_() {
   const eventName = getPublicConfig_().eventName;
   const data = ensureDataSheet_(getSpreadsheet_());
   const lastRow = data.getLastRow();
+  const resetAt = getAttendanceResetAt_();
   if (lastRow > 1) {
-    data.getRange(2, 1, lastRow - 1, 7).getDisplayValues().forEach(row => {
+    data.getRange(2, 1, lastRow - 1, 7).getValues().forEach(row => {
       const team = String(row[3] || '').trim();
       const result = String(row[5] || '').trim();
       const rowEventName = String(row[6] || '').trim();
-      if (result === '報到成功' && rowEventName === eventName && Object.prototype.hasOwnProperty.call(counts, team)) {
+      const timestamp = row[0] instanceof Date ? row[0] : new Date(row[0]);
+      if (timestamp > resetAt && result === '報到成功' && rowEventName === eventName && Object.prototype.hasOwnProperty.call(counts, team)) {
         counts[team] += 1;
       }
     });
@@ -171,9 +183,45 @@ function getAttendanceCounts_() {
     ok: true,
     eventName,
     counts,
+    expected: EXPECTED_COUNTS,
     total: teams.reduce((sum, team) => sum + counts[team], 0),
+    totalExpected: teams.reduce((sum, team) => sum + EXPECTED_COUNTS[team], 0),
+    resetAt: resetAt.getTime() > 0 ? resetAt.toISOString() : null,
     updatedAt: new Date().toISOString()
   };
+}
+
+function getAttendanceResetAt_() {
+  const value = PropertiesService.getScriptProperties().getProperty(ATTENDANCE_RESET_AT_PROPERTY);
+  const date = value ? new Date(value) : new Date(0);
+  return isNaN(date.getTime()) ? new Date(0) : date;
+}
+
+function getActiveSuccessfulEmails_(data, eventName) {
+  const lastRow = data.getLastRow();
+  if (lastRow <= 1) return [];
+  const resetAt = getAttendanceResetAt_();
+  return data.getRange(2, 1, lastRow - 1, 7).getValues()
+    .filter(row => {
+      const timestamp = row[0] instanceof Date ? row[0] : new Date(row[0]);
+      return timestamp > resetAt && String(row[5] || '').trim() === '報到成功' && String(row[6] || '').trim() === eventName;
+    })
+    .map(row => String(row[4] || '').trim().toLowerCase());
+}
+
+function digestHex_(value) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(value || ''), Utilities.Charset.UTF_8)
+    .map(byte => ((byte + 256) % 256).toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function passwordMatches_(password) {
+  const actual = digestHex_(password);
+  let difference = actual.length ^ RESET_PASSWORD_SHA256.length;
+  for (let i = 0; i < Math.max(actual.length, RESET_PASSWORD_SHA256.length); i += 1) {
+    difference |= (actual.charCodeAt(i) || 0) ^ (RESET_PASSWORD_SHA256.charCodeAt(i) || 0);
+  }
+  return difference === 0;
 }
 
 function jsonpOutput_(callback, payload) {
@@ -201,6 +249,12 @@ function doPost(e) {
   lock.waitLock(10000);
   try {
     const p = (e && e.parameter) || {};
+    if (p.action === 'resetCounts') {
+      if (!passwordMatches_(p.password)) return resultPage_(false, '密碼錯誤', '實到人數未清除，請關閉此頁後重新操作。');
+      const now = new Date();
+      PropertiesService.getScriptProperties().setProperty(ATTENDANCE_RESET_AT_PROPERTY, now.toISOString());
+      return resultPage_(true, '實到人數已清除', '各組實到已歸零；原始報到紀錄仍安全保留在試算表中。');
+    }
     const name = String(p.name || '').trim().replace(/\s+/g, ' ');
     const role = String(p.role || '');
     const team = String(p.team || '');
@@ -217,7 +271,7 @@ function doPost(e) {
 
     const ss = getSpreadsheet_();
     const data = ensureDataSheet_(ss);
-    const emails = data.getLastRow() > 1 ? data.getRange(2, 5, data.getLastRow() - 1, 1).getDisplayValues().flat().map(x => x.toLowerCase()) : [];
+    const emails = getActiveSuccessfulEmails_(data, c.eventName);
     const duplicate = emails.includes(email);
     if (!duplicate) {
       data.appendRow([now, name, role, team, email, '報到成功', c.eventName]);

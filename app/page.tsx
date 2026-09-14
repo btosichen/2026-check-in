@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Clock3, Mail, UserRound } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Clock3, LockKeyhole, Mail, UserRound } from "lucide-react";
 import Image from "next/image";
 
 const GAS_URL = "https://script.google.com/macros/s/AKfycbxF-eM8zsoHOawK9ASXhtYgF_QJOKzrWfmpmKfGcF_C2uBzXMIg4tmqgR6f8ieyj0bL-g/exec";
 const TEAMS = ["緊急救護組", "安全防護組", "避難引導組", "通報組", "搶救組"] as const;
+const EXPECTED_COUNTS: Record<string, number> = { "緊急救護組": 16, "安全防護組": 27, "避難引導組": 71, "通報組": 15, "搶救組": 68 };
 
 type Status = { state: "before" | "open" | "closed"; message: string; window: string; eventName: string };
-type CountPayload = { ok: boolean; counts?: Record<string, number>; total?: number; updatedAt?: string };
+type CountPayload = { ok: boolean; counts?: Record<string, number>; expected?: Record<string, number>; total?: number; totalExpected?: number; updatedAt?: string };
 
 function loadJsonp<T>(params: Record<string, string>, prefix: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -50,28 +51,65 @@ function statusFromConfig(config: { ok?: boolean; eventName?: string; startAt?: 
 export default function Home() {
   const [status, setStatus] = useState<Status>({ state: "closed", message: "正在確認時間", window: "讀取活動時間中…", eventName: "914 緊急避難點名" });
   const [counts, setCounts] = useState<Record<string, number> | null>(null);
+  const [expected, setExpected] = useState<Record<string, number>>(EXPECTED_COUNTS);
   const [total, setTotal] = useState<number | null>(null);
+  const [totalExpected, setTotalExpected] = useState<number | null>(197);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+
+  const refreshCounts = useCallback(() => {
+    return loadJsonp<CountPayload>({ action: "counts" }, "receiveCheckinCounts")
+      .then(payload => {
+        if (!payload.ok || !payload.counts) throw new Error("Invalid counts");
+        setCounts(payload.counts);
+        setExpected(payload.expected || EXPECTED_COUNTS);
+        setTotal(payload.total || 0);
+        setTotalExpected(payload.totalExpected ?? 197);
+        setUpdatedAt(payload.updatedAt || new Date().toISOString());
+      })
+      .catch(() => setUpdatedAt(null));
+  }, []);
 
   useEffect(() => {
     loadJsonp<{ ok?: boolean; eventName?: string; startAt?: string; endAt?: string; serverTime?: string }>({}, "receiveCheckinConfig")
       .then(config => setStatus(statusFromConfig(config)))
       .catch(() => setStatus(previous => ({ ...previous, message: "目前無法讀取活動時間" })));
 
-    const loadCounts = () => {
-      loadJsonp<CountPayload>({ action: "counts" }, "receiveCheckinCounts")
-        .then(payload => {
-          if (!payload.ok || !payload.counts) throw new Error("Invalid counts");
-          setCounts(payload.counts);
-          setTotal(payload.total || 0);
-          setUpdatedAt(payload.updatedAt || new Date().toISOString());
-        })
-        .catch(() => setUpdatedAt(null));
-    };
-    loadCounts();
-    const timer = window.setInterval(loadCounts, 15000);
+    refreshCounts();
+    const timer = window.setInterval(refreshCounts, 15000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [refreshCounts]);
+
+  const resetAttendance = () => {
+    const password = window.prompt("請輸入指揮官密碼");
+    if (password === null) return;
+    if (!password) {
+      window.alert("尚未輸入密碼。");
+      return;
+    }
+    if (!window.confirm("確定要將各組實到人數歸零嗎？原始報到紀錄仍會保留。")) return;
+    const resetForm = document.createElement("form");
+    resetForm.method = "post";
+    resetForm.action = GAS_URL;
+    resetForm.target = "_blank";
+    resetForm.style.display = "none";
+    for (const [name, value] of [["action", "resetCounts"], ["password", password]]) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      resetForm.appendChild(input);
+    }
+    document.body.appendChild(resetForm);
+    resetForm.submit();
+    resetForm.remove();
+    setResetMessage("清除請求已送出，完成後將自動更新…");
+    window.setTimeout(() => void refreshCounts(), 2500);
+    window.setTimeout(() => {
+      void refreshCounts();
+      setResetMessage(null);
+    }, 5000);
+  };
 
   const open = status.state === "open";
   return <main className="relative min-h-screen overflow-hidden bg-[linear-gradient(135deg,#fff6a8,#ffd5ea_50%,#bff7ff)] px-4 py-6 text-[#40345c] sm:py-10">
@@ -93,9 +131,10 @@ export default function Home() {
       </form>
     </section>
     <section aria-labelledby="attendanceTitle" className="relative mx-auto mt-9 max-w-md rounded-[26px] border-[3px] border-white bg-white/95 p-5 shadow-[0_12px_28px_rgba(21,57,87,.14)]">
-      <div className="flex items-center justify-between gap-3"><h2 id="attendanceTitle" className="text-xl font-black text-[#153957]">各組現場報到</h2><p className="whitespace-nowrap rounded-full bg-[#153957] px-3 py-2 text-sm font-black text-white">總計 <strong>{total ?? "—"}</strong> 人</p></div>
-      <div aria-live="polite" className="mt-4 grid grid-cols-2 gap-2.5 max-[400px]:grid-cols-1">{TEAMS.map(team => <div key={team} className="flex min-h-13 items-center justify-between gap-2 rounded-2xl border-2 border-[#d7e4ea] bg-[#f7fbfd] px-3 py-2.5 text-sm font-black text-[#334d5b] last:col-span-2 max-[400px]:last:col-span-1"><span>{team}</span><strong className="text-2xl text-[#d43b35]">{counts?.[team] ?? "—"}</strong></div>)}</div>
-      <p className="mt-3 text-center text-xs font-bold text-[#6d7580]">{updatedAt ? `每 15 秒自動更新｜${new Intl.DateTimeFormat("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(updatedAt))} 更新` : "正在讀取現場統計…"}</p>
+      <div className="flex items-center justify-between gap-3"><h2 id="attendanceTitle" className="text-xl font-black text-[#153957]">各組現場報到</h2><p className="whitespace-nowrap rounded-2xl bg-[#153957] px-3 py-2 text-center text-xs font-black leading-5 text-white">實到 <strong className="text-base">{total ?? "—"}</strong><br/>應到 <strong className="text-base">{totalExpected ?? "—"}</strong></p></div>
+      <div aria-live="polite" className="mt-4 grid grid-cols-2 gap-2.5 max-[400px]:grid-cols-1">{TEAMS.map(team => <div key={team} className="min-h-[78px] rounded-2xl border-2 border-[#d7e4ea] bg-[#f7fbfd] px-3 py-2.5 text-sm font-black text-[#334d5b] last:col-span-2 max-[400px]:last:col-span-1"><span className="block">{team}</span><span className="mt-2 flex items-end justify-between text-xs text-[#6d7580]">實到 <strong className="text-2xl text-[#d43b35]">{counts?.[team] ?? "—"}</strong><span>／應到 <b className="text-base text-[#153957]">{expected?.[team] ?? "—"}</b></span></span></div>)}</div>
+      <p className="mt-3 text-center text-xs font-bold text-[#6d7580]">{resetMessage || (updatedAt ? `每 15 秒自動更新｜${new Intl.DateTimeFormat("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(updatedAt))} 更新` : "正在讀取現場統計…")}</p>
+      <button type="button" onClick={resetAttendance} className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border-2 border-[#c63042] bg-white text-sm font-black text-[#a92235] transition hover:bg-[#fff0f2] focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-[#c63042]/20"><LockKeyhole size={18}/>清除實到人數</button>
     </section>
     <p className="relative mx-auto mt-5 max-w-md text-center text-xs font-bold leading-5 text-[#685a7a]">個人資料僅供本次活動出席紀錄使用</p>
   </main>;
