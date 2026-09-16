@@ -4,7 +4,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Clock3, LockKeyhole, Mail, Settings, UserRound } from "lucide-react";
 import Image from "next/image";
 
-const GAS_URL = "https://script.google.com/macros/s/AKfycbxF-eM8zsoHOawK9ASXhtYgF_QJOKzrWfmpmKfGcF_C2uBzXMIg4tmqgR6f8ieyj0bL-g/exec";
+const API_URL = "/api/checkin";
 const TEAMS = ["緊急救護組", "安全防護組", "避難引導組", "通報組", "搶救組"] as const;
 const TEAM_LABELS: Record<(typeof TEAMS)[number], string> = {
   "緊急救護組": "緊急救護組（救護班）",
@@ -19,25 +19,11 @@ type Status = { state: "before" | "open" | "closed"; message: string; window: st
 type CountPayload = { ok: boolean; counts?: Record<string, number>; expected?: Record<string, number>; total?: number; totalExpected?: number; updatedAt?: string };
 type ProtectedAction = "resetCounts" | "openSpreadsheet";
 
-function loadJsonp<T>(params: Record<string, string>, prefix: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const callback = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const script = document.createElement("script");
-    const cleanup = () => {
-      script.remove();
-      delete (window as unknown as Record<string, unknown>)[callback];
-    };
-    (window as unknown as Record<string, unknown>)[callback] = (payload: T) => {
-      cleanup();
-      resolve(payload);
-    };
-    script.src = `${GAS_URL}?${new URLSearchParams({ ...params, callback, _: String(Date.now()) })}`;
-    script.onerror = () => {
-      cleanup();
-      reject(new Error("JSONP request failed"));
-    };
-    document.head.appendChild(script);
-  });
+async function loadApiJson<T>(params: Record<string, string> = {}): Promise<T> {
+  const query = new URLSearchParams({ ...params, _: String(Date.now()) });
+  const response = await fetch(`${API_URL}?${query}`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`API request failed: ${response.status}`);
+  return response.json() as Promise<T>;
 }
 
 function statusFromConfig(config: { ok?: boolean; eventName?: string; startAt?: string; endAt?: string; serverTime?: string }) {
@@ -68,7 +54,7 @@ export default function Home() {
   const [password, setPassword] = useState("");
 
   const refreshCounts = useCallback(() => {
-    return loadJsonp<CountPayload>({ action: "counts" }, "receiveCheckinCounts")
+    return loadApiJson<CountPayload>({ action: "counts" })
       .then(payload => {
         if (!payload.ok || !payload.counts) throw new Error("Invalid counts");
         setCounts(payload.counts);
@@ -81,7 +67,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    loadJsonp<{ ok?: boolean; eventName?: string; startAt?: string; endAt?: string; serverTime?: string }>({}, "receiveCheckinConfig")
+    loadApiJson<{ ok?: boolean; eventName?: string; startAt?: string; endAt?: string; serverTime?: string }>()
       .then(config => setStatus(statusFromConfig(config)))
       .catch(() => setStatus(previous => ({ ...previous, message: "目前無法讀取活動時間" })));
 
@@ -107,7 +93,7 @@ export default function Home() {
     const action = protectedAction;
     const protectedForm = document.createElement("form");
     protectedForm.method = "post";
-    protectedForm.action = GAS_URL;
+    protectedForm.action = API_URL;
     protectedForm.target = "_blank";
     protectedForm.style.display = "none";
     for (const [name, value] of [["action", action], ["password", password]]) {
@@ -143,7 +129,7 @@ export default function Home() {
         <div className="relative z-10 max-w-[62%]"><span className={`inline-block rounded-full border-[3px] border-white px-3 py-1.5 text-sm font-black shadow-[0_4px_0_#071e32] ${open ? "bg-[#24c996]" : "bg-[#e64532]"}`}>{status.message}</span><p className="mt-6 text-sm font-black tracking-[.08em] text-[#ffe08a] [text-shadow:0_2px_3px_#041b2d]">{status.eventName}</p><h1 className="mt-1 text-[2.1rem] font-black tracking-tight [text-shadow:0_3px_0_#071e32,0_6px_18px_#0009]">現場報到</h1><p className="mt-2 text-sm font-black leading-5 [text-shadow:0_2px_3px_#041b2d]">填寫四項資料，快速完成簽到！</p></div>
       </header>
       <div className="mx-6 flex items-start gap-2 rounded-2xl border-2 border-[#ffe078] bg-[#fff9cd] px-4 py-3 text-sm font-bold leading-5 text-[#765723] shadow-sm sm:mx-8"><Clock3 className="mt-0.5 shrink-0 text-[#ff9731]" size={19}/><span>{status.window}<br/>送出時自動記錄時間</span></div>
-      <form action={GAS_URL} method="post" className="px-6 pb-8 pt-6 sm:px-8">
+      <form action={API_URL} method="post" className="px-6 pb-8 pt-6 sm:px-8">
         <label className="block text-sm font-black text-[#5a4b79]" htmlFor="name">姓名</label><div className="relative mt-2"><UserRound className="absolute left-4 top-1/2 -translate-y-1/2 text-[#e64532]" size={20}/><input id="name" name="name" required minLength={2} maxLength={40} autoComplete="name" placeholder="請輸入真實姓名" className="min-h-14 w-full rounded-2xl border-2 border-[#e5dcff] bg-[#fcfbff] pl-12 pr-4 text-base outline-none transition focus:border-[#8b7cff] focus:ring-4 focus:ring-[#8b7cff]/15"/></div>
         <fieldset className="mt-5"><legend className="text-sm font-black text-[#5a4b79]">身分</legend><div className="mt-2 grid grid-cols-2 gap-3">{["教師", "職員"].map((role, i) => <label key={role} className="cursor-pointer"><input className="peer sr-only" type="radio" name="role" value={role} required/><span className={`grid min-h-13 place-items-center rounded-2xl border-2 font-black transition peer-checked:-translate-y-0.5 peer-checked:shadow-md peer-focus-visible:ring-4 ${i === 0 ? "border-[#ffb5d2] bg-[#fff0f7] text-[#d84988] peer-checked:border-[#ff5fa5]" : "border-[#95eaf3] bg-[#eefdff] text-[#168b9a] peer-checked:border-[#2bcfe0]"}`}>{role}</span></label>)}</div></fieldset>
         <label className="mt-5 block text-sm font-black text-[#5a4b79]" htmlFor="team">編組</label><select id="team" name="team" required defaultValue="" className="mt-2 min-h-14 w-full rounded-2xl border-2 border-[#d9d0ff] bg-[#f7f4ff] px-4 text-base font-black outline-none focus:border-[#8b7cff] focus:ring-4 focus:ring-[#8b7cff]/15"><option value="" disabled>請選擇所屬編組</option>{TEAMS.map(team => <option key={team} value={team}>{TEAM_LABELS[team]}</option>)}</select>

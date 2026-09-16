@@ -27,7 +27,9 @@ Web App 的活動名稱和開放時段目前定義於 `app/api/checkin/route.ts`
 
 ## 純 HTML／GitHub Pages 版本
 
-根目錄的 `index.html` 不需要 Node.js，可直接由 GitHub Pages 顯示。它使用 Google Apps Script 寫入試算表：
+根目錄的 `index.html` 保留原本的 GitHub Pages 網址，並自動轉往伺服器中繼版。舊 QR Code 與書籤不必更換；老師的瀏覽器不再直接連線到可能被校園 Wi-Fi 阻擋的 Google Apps Script 網域。
+
+伺服器中繼版仍使用 Google Apps Script 寫入原試算表：
 
 1. 將 `google-apps-script/Code.gs` 貼入試算表的 Apps Script。
 2. 執行「初始化工作表」。
