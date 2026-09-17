@@ -23,21 +23,13 @@ npm install
 npm run dev
 ```
 
-Web App 的活動名稱和開放時段目前定義於 `app/api/checkin/route.ts`。
+Web App 透過 `ymsh-emergency-checkin-proxy.btosichen.workers.dev` 讀寫 Google Apps Script；活動名稱和開放時段仍在 Google 試算表設定。
 
 ## 純 HTML／GitHub Pages 版本
 
-根目錄的 `index.html` 保留原本的 GitHub Pages 網址，並自動轉往伺服器中繼版。舊 QR Code 與書籤不必更換；老師的瀏覽器不再直接連線到可能被校園 Wi-Fi 阻擋的 Google Apps Script 網域。
+根目錄的 `index.html` 保留原本的 GitHub Pages 網址，並自動轉往正式報到站。舊 QR Code 與書籤不必更換；正式站會經由 Cloudflare Worker 存取 GAS，避開校園 Wi-Fi 封鎖 `script.google.com` 的問題。
 
-伺服器中繼版仍使用 Google Apps Script 寫入原試算表：
-
-1. 將 `google-apps-script/Code.gs` 貼入試算表的 Apps Script。
-2. 執行「初始化工作表」。
-3. 將 Apps Script 部署成網頁應用程式，執行身分選擇自己，存取權選擇所有人。
-4. 把部署網址貼到 `index.html` 的 `GAS_URL`。
-5. 在 GitHub repository 的 Settings → Pages，選擇 `main` 分支與根目錄。
-
-活動時間直接在 Google 試算表的黃色欄位修改；HTML 會從 GAS 讀取最新設定。
+Worker 的可讀版程式位於 `cloudflare-worker/worker.js`。活動時間直接在 Google 試算表的黃色欄位修改，正式站會從 Worker 讀取最新設定。
 
 ## Google 表單／試算表版本
 
