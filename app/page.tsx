@@ -18,12 +18,19 @@ const EXPECTED_COUNTS: Record<string, number> = { "緊急救護組": 16, "安全
 type Status = { state: "before" | "open" | "closed"; message: string; window: string; eventName: string };
 type CountPayload = { ok: boolean; counts?: Record<string, number>; expected?: Record<string, number>; total?: number; totalExpected?: number; updatedAt?: string };
 type ProtectedAction = "resetCounts" | "openSpreadsheet";
+type ConnectionState = "connecting" | "retrying" | "ready" | "failed";
 
-async function loadApiJson<T>(params: Record<string, string> = {}): Promise<T> {
+async function loadApiJson<T>(params: Record<string, string> = {}, timeoutMs = 4000): Promise<T> {
   const query = new URLSearchParams({ ...params, _: String(Date.now()) });
-  const response = await fetch(`${API_URL}?${query}`, { cache: "no-store" });
-  if (!response.ok) throw new Error(`API request failed: ${response.status}`);
-  return response.json() as Promise<T>;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${API_URL}?${query}`, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) throw new Error(`API request failed: ${response.status}`);
+    return response.json() as Promise<T>;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 function statusFromConfig(config: { ok?: boolean; eventName?: string; startAt?: string; endAt?: string; serverTime?: string }) {
@@ -43,7 +50,8 @@ function statusFromConfig(config: { ok?: boolean; eventName?: string; startAt?: 
 }
 
 export default function Home() {
-  const [status, setStatus] = useState<Status>({ state: "closed", message: "正在確認時間", window: "讀取活動時間中…", eventName: "914 緊急避難點名" });
+  const [status, setStatus] = useState<Status>({ state: "closed", message: "🔄 正在連接報到系統…", window: "讀取活動時間中…", eventName: "914 緊急避難點名" });
+  const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [counts, setCounts] = useState<Record<string, number> | null>(null);
   const [expected, setExpected] = useState<Record<string, number>>(EXPECTED_COUNTS);
   const [total, setTotal] = useState<number | null>(null);
@@ -66,15 +74,35 @@ export default function Home() {
       .catch(() => setUpdatedAt(null));
   }, []);
 
-  useEffect(() => {
-    loadApiJson<{ ok?: boolean; eventName?: string; startAt?: string; endAt?: string; serverTime?: string }>()
-      .then(config => setStatus(statusFromConfig(config)))
-      .catch(() => setStatus(previous => ({ ...previous, message: "目前無法讀取活動時間" })));
+  const connectConfig = useCallback(async () => {
+    setConnectionState("connecting");
+    setStatus(previous => ({ ...previous, state: "closed", message: "🔄 正在連接報到系統…", window: "讀取活動時間中…" }));
 
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const config = await loadApiJson<{ ok?: boolean; eventName?: string; startAt?: string; endAt?: string; serverTime?: string }>();
+        setStatus(statusFromConfig(config));
+        setConnectionState("ready");
+        return;
+      } catch {
+        if (attempt < 2) {
+          setConnectionState("retrying");
+          setStatus(previous => ({ ...previous, message: "🔄 網路較慢，正在重新連線…" }));
+          await new Promise(resolve => window.setTimeout(resolve, attempt === 0 ? 1500 : 3000));
+        }
+      }
+    }
+
+    setConnectionState("failed");
+    setStatus(previous => ({ ...previous, state: "closed", message: "⚠️ 暫時無法連線", window: "尚未取得活動時間" }));
+  }, []);
+
+  useEffect(() => {
+    void connectConfig();
     refreshCounts();
     const timer = window.setInterval(refreshCounts, 15000);
     return () => window.clearInterval(timer);
-  }, [refreshCounts]);
+  }, [connectConfig, refreshCounts]);
 
   const resetAttendance = () => {
     setPassword("");
@@ -129,6 +157,10 @@ export default function Home() {
         <div className="relative z-10 max-w-[62%]"><span className={`inline-block rounded-full border-[3px] border-white px-3 py-1.5 text-sm font-black shadow-[0_4px_0_#071e32] ${open ? "bg-[#24c996]" : "bg-[#e64532]"}`}>{status.message}</span><p className="mt-6 text-sm font-black tracking-[.08em] text-[#ffe08a] [text-shadow:0_2px_3px_#041b2d]">{status.eventName}</p><h1 className="mt-1 text-[2.1rem] font-black tracking-tight [text-shadow:0_3px_0_#071e32,0_6px_18px_#0009]">現場報到</h1><p className="mt-2 text-sm font-black leading-5 [text-shadow:0_2px_3px_#041b2d]">填寫四項資料，快速完成簽到！</p></div>
       </header>
       <div className="mx-6 flex items-start gap-2 rounded-2xl border-2 border-[#ffe078] bg-[#fff9cd] px-4 py-3 text-sm font-bold leading-5 text-[#765723] shadow-sm sm:mx-8"><Clock3 className="mt-0.5 shrink-0 text-[#ff9731]" size={19}/><span>{status.window}<br/>送出時自動記錄時間</span></div>
+      {connectionState === "failed" && <div role="alert" className="mx-6 mt-3 rounded-2xl border-2 border-[#ff9f9f] bg-[#fff2f2] px-4 py-4 text-center text-[#8f2435] sm:mx-8">
+        <p className="text-sm font-black">連線未成功，請重新連線</p>
+        <button type="button" onClick={() => void connectConfig()} className="mt-3 min-h-12 w-full rounded-xl bg-[#8f2435] px-4 text-base font-black text-white shadow-[0_5px_0_#5d1723] transition hover:-translate-y-0.5 hover:brightness-110 active:translate-y-1 active:shadow-[0_2px_0_#5d1723] focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-[#8f2435]/25">重新連線</button>
+      </div>}
       <form action={API_URL} method="post" className="px-6 pb-8 pt-6 sm:px-8">
         <label className="block text-sm font-black text-[#5a4b79]" htmlFor="name">姓名</label><div className="relative mt-2"><UserRound className="absolute left-4 top-1/2 -translate-y-1/2 text-[#e64532]" size={20}/><input id="name" name="name" required minLength={2} maxLength={40} autoComplete="name" placeholder="請輸入真實姓名" className="min-h-14 w-full rounded-2xl border-2 border-[#e5dcff] bg-[#fcfbff] pl-12 pr-4 text-base outline-none transition focus:border-[#8b7cff] focus:ring-4 focus:ring-[#8b7cff]/15"/></div>
         <fieldset className="mt-5"><legend className="text-sm font-black text-[#5a4b79]">身分</legend><div className="mt-2 grid grid-cols-2 gap-3">{["教師", "職員"].map((role, i) => <label key={role} className="cursor-pointer"><input className="peer sr-only" type="radio" name="role" value={role} required/><span className={`grid min-h-13 place-items-center rounded-2xl border-2 font-black transition peer-checked:-translate-y-0.5 peer-checked:shadow-md peer-focus-visible:ring-4 ${i === 0 ? "border-[#ffb5d2] bg-[#fff0f7] text-[#d84988] peer-checked:border-[#ff5fa5]" : "border-[#95eaf3] bg-[#eefdff] text-[#168b9a] peer-checked:border-[#2bcfe0]"}`}>{role}</span></label>)}</div></fieldset>
