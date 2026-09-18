@@ -4,7 +4,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Clock3, LockKeyhole, Mail, Settings, UserRound } from "lucide-react";
 import Image from "next/image";
 
-const API_URL = "/api/checkin";
+const WORKER_URL = "https://ymsh-emergency-checkin-proxy.btosichen.workers.dev";
 const TEAMS = ["緊急救護組", "安全防護組", "避難引導組", "通報組", "搶救組"] as const;
 const TEAM_LABELS: Record<(typeof TEAMS)[number], string> = {
   "緊急救護組": "緊急救護組（救護班）",
@@ -25,7 +25,7 @@ async function loadApiJson<T>(params: Record<string, string> = {}, timeoutMs = 4
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${API_URL}?${query}`, { cache: "no-store", signal: controller.signal });
+    const response = await fetch(`${WORKER_URL}/api?${query}`, { cache: "no-store", signal: controller.signal });
     if (!response.ok) throw new Error(`API request failed: ${response.status}`);
     return response.json() as Promise<T>;
   } finally {
@@ -121,7 +121,7 @@ export default function Home() {
     const action = protectedAction;
     const protectedForm = document.createElement("form");
     protectedForm.method = "post";
-    protectedForm.action = API_URL;
+    protectedForm.action = `${WORKER_URL}/admin`;
     protectedForm.target = "_blank";
     protectedForm.style.display = "none";
     for (const [name, value] of [["action", action], ["password", password]]) {
@@ -161,7 +161,7 @@ export default function Home() {
         <p className="text-sm font-black">連線未成功，請重新連線</p>
         <button type="button" onClick={() => void connectConfig()} className="mt-3 min-h-12 w-full rounded-xl bg-[#8f2435] px-4 text-base font-black text-white shadow-[0_5px_0_#5d1723] transition hover:-translate-y-0.5 hover:brightness-110 active:translate-y-1 active:shadow-[0_2px_0_#5d1723] focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-[#8f2435]/25">重新連線</button>
       </div>}
-      <form action={API_URL} method="post" className="px-6 pb-8 pt-6 sm:px-8">
+      <form action={`${WORKER_URL}/submit`} method="post" className="px-6 pb-8 pt-6 sm:px-8">
         <label className="block text-sm font-black text-[#5a4b79]" htmlFor="name">姓名</label><div className="relative mt-2"><UserRound className="absolute left-4 top-1/2 -translate-y-1/2 text-[#e64532]" size={20}/><input id="name" name="name" required minLength={2} maxLength={40} autoComplete="name" placeholder="請輸入真實姓名" className="min-h-14 w-full rounded-2xl border-2 border-[#e5dcff] bg-[#fcfbff] pl-12 pr-4 text-base outline-none transition focus:border-[#8b7cff] focus:ring-4 focus:ring-[#8b7cff]/15"/></div>
         <fieldset className="mt-5"><legend className="text-sm font-black text-[#5a4b79]">身分</legend><div className="mt-2 grid grid-cols-2 gap-3">{["教師", "職員"].map((role, i) => <label key={role} className="cursor-pointer"><input className="peer sr-only" type="radio" name="role" value={role} required/><span className={`grid min-h-13 place-items-center rounded-2xl border-2 font-black transition peer-checked:-translate-y-0.5 peer-checked:shadow-md peer-focus-visible:ring-4 ${i === 0 ? "border-[#ffb5d2] bg-[#fff0f7] text-[#d84988] peer-checked:border-[#ff5fa5]" : "border-[#95eaf3] bg-[#eefdff] text-[#168b9a] peer-checked:border-[#2bcfe0]"}`}>{role}</span></label>)}</div></fieldset>
         <label className="mt-5 block text-sm font-black text-[#5a4b79]" htmlFor="team">編組</label><select id="team" name="team" required defaultValue="" className="mt-2 min-h-14 w-full rounded-2xl border-2 border-[#d9d0ff] bg-[#f7f4ff] px-4 text-base font-black outline-none focus:border-[#8b7cff] focus:ring-4 focus:ring-[#8b7cff]/15"><option value="" disabled>請選擇所屬編組</option>{TEAMS.map(team => <option key={team} value={team}>{TEAM_LABELS[team]}</option>)}</select>
